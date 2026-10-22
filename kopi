@@ -1,0 +1,38 @@
+import sqlite3
+import pandas as pd
+import streamlit as st
+
+st.title("☕ Dashboard Penjualan Kopi (Data dari SQL Database)")
+
+# 1. Asumsikan 'df' adalah DataFrame data bersih Anda
+# (Jika Anda membaca dari excel bersih terlebih dahulu):
+df = pd.read_excel("~$Laporan_Penjualan_Kopi_Plus_Chart.xlsx")
+
+# 2. Membuat koneksi ke Database SQLite lokal
+conn = sqlite3.connect("database_kopi.db")
+
+# 3. PENTING: Masukkan data DataFrame ke dalam tabel SQL
+# if_exists='replace' artinya tabel akan dibuat/perbarui otomatis
+df.to_sql("tabel_penjualan", conn, if_exists="replace", index=False)
+
+# 4. Sekarang jalankan kueri SQL lewat Pandas
+query_sql = """
+    SELECT 
+        Nama_Produk,
+        SUM(Jumlah_Cup) AS Total_Cup,
+        SUM(Total_Harga) AS Total_Pendapatan
+    FROM tabel_penjualan
+    GROUP BY Nama_Produk
+    ORDER BY Total_Pendapatan DESC
+"""
+
+df_sql = pd.read_sql_query(query_sql, conn)
+
+# 5. Tampilkan hasil query ke Streamlit
+st.subheader("📊 Ringkasan Penjualan dari SQL Database")
+st.dataframe(df_sql)
+
+st.bar_chart(data=df_sql, x="Nama_Produk", y="Total_Pendapatan")
+
+# Tutup koneksi database
+conn.close()
