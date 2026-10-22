@@ -4,7 +4,7 @@ import streamlit as st
 
 st.title("☕ Dashboard Penjualan Kopi (Data dari SQL Database)")
 
-# 1. Asumsikan 'df' adalah DataFrame data bersih Anda
+# 1. Asumsikan 'df' adalah DataFrame data bersih
 # (Jika Anda membaca dari excel bersih terlebih dahulu):
 df = pd.read_excel("~$Laporan_Penjualan_Kopi_Plus_Chart.xlsx")
 
