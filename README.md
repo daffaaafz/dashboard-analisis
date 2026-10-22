@@ -1,6 +1,6 @@
 # 📊 Interactive Sales Analytics Dashboard
 
-A dynamic and interactive web dashboard built with **Streamlit**, **Python**, and **SQLite (In-Memory)** to analyze coffee sales data in real-time.
+A dynamic and interactive web dashboard built with **Streamlit**, **Python**, and **SQLite (In-Memory)** to analyze sales data in real-time.
 
 ![Streamlit Status](https://img.shields.io/badge/Streamlit-Cloud-FF4B4B?logo=streamlit)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python)
