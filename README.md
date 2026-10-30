@@ -1,4 +1,4 @@
-# ☕ Coffee Sales Analytics & Business Insights Dashboard
+#  Sales Analytics & Business Insights Dashboard
 
 > Dashboard analitik penjualan kopi interaktif berbasis web yang dibangun menggunakan **Python, Streamlit, dan Plotly**, dirancang dengan arsitektur *vendor-agnostic* untuk memproses data multi-klien secara dinamis.
 
@@ -36,9 +36,8 @@ Proyek ini dikembangkan sebagai bagian dari portofolio *Data Science / Data Anal
 
 ---
 
-## 💻 Cara Menjalankan Proyek Secara Lokal
+## 💻 LINK
 
 1. **Clone repository ini:**
    ```bash
-   git clone [https://github.com/username-kamu/coffee-sales-dashboard.git](https://github.com/username-kamu/coffee-sales-dashboard.git)
-   cd coffee-sales-dashboard
+   git clone [https://github.com/daffaaafz/coffee-sales-dashboard.git]
