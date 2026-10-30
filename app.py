@@ -1,221 +1,154 @@
 import io
-import pandas as pd
 import sqlite3
+import pandas as pd
+import plotly.express as px
 import streamlit as st
 
-# Konfigurasi halaman Streamlit agar lebar penuh
+# 1. Konfigurasi Halaman Web
 st.set_page_config(
-    page_title="Dashboard Analisis Penjualan Kopi", layout="wide"
+    page_title="Dashboard Analisis Penjualan Kopi",
+    layout="wide",
+    page_icon="☕",
 )
 
-# Judul Utama Dashboard
-st.title("📊 Dashboard Analisis Penjualan Kopi")
+st.title("☕ Dashboard Analisis Penjualan Kopi")
 st.markdown("---")
 
-# ==========================================
-# 1. SIDEBAR: UPLOAD FILE & FILTER
-# ==========================================
-st.sidebar.header("📂 Unggah Data & Filter")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload File Excel Penjualan", type=["xlsx", "xls"]
-)
+# 2. Sidebar: Upload File & Filter
+st.sidebar.header("📁 Unggah Data & Filter")
 
-# Membuat koneksi SQLite di dalam memori (In-Memory Database)
-conn = sqlite3.connect(":memory:")
+uploaded_file = st.sidebar.file_uploader(
+    "Unggah File Excel Penjualan (.xlsx)", type=["xlsx"]
+)
 
 if uploaded_file is not None:
-  # Membaca file Excel yang di-upload user
-  df = pd.read_excel(uploaded_file)
+    # Read Excel
+    df = pd.read_excel(uploaded_file)
+    df.columns = df.columns.str.strip()  # Hapus spasi tak terlihat pada kolom
 
-  # Membersihkan nama kolom (menghilangkan spasi ekstra jika ada)
-  df.columns = df.columns.str.strip()
+    # Simpan Data ke SQLite In-Memory Database
+    conn = sqlite3.connect(":memory:")
+    df.to_sql("penjualan", conn, index=False, if_exists="replace")
 
-  # Masukkan dataframe ke dalam tabel SQLite bernama 'tabel_penjualan'
-  df.to_sql("tabel_penjualan", conn, if_exists="replace", index=False)
-
-  st.sidebar.success("File berhasil divalidasi, diunggah & dibersihkan!")
-else:
-  # Data Dummy / Fallback jika belum upload file (agar aplikasi tidak error saat pertama dibuka)
-  data_dummy = {
-      "ID_Transaksi": ["KOP-001", "KOP-002", "KOP-003", "KOP-004"],
-      "Bulan": ["Januari", "Februari", "Maret", "April"],
-      "Tanggal": ["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01"],
-      "Nama_Produk": [
-          "Kopi Susu Gula Aren",
-          "Es Kopi Hitam",
-          "Kopi Latte",
-          "Kopi Americano",
-      ],
-      "Kota": ["Jakarta Selatan", "Bandung", "Surabaya", "Jakarta Pusat"],
-      "Jumlah_Cup": [15, 20, 10, 25],
-      "Total_Harga": [225000, 300000, 150000, 400000],
-  }
-  df = pd.DataFrame(data_dummy)
-  df.to_sql("tabel_penjualan", conn, if_exists="replace", index=False)
-  st.sidebar.info(
-      "Menggunakan data default. Silakan upload file Excel Anda di atas."
-  )
-
-# --- FITUR FILTER KOTA ---
-# Mengambil daftar kota unik dari database untuk dropdown filter
-query_kota = "SELECT DISTINCT Kota FROM tabel_penjualan"
-df_kota = pd.read_sql_query(query_kota, conn)
-list_kota = ["Semua Kota"] + df_kota["Kota"].tolist()
-
-selected_kota = st.sidebar.selectbox("Filter Berdasarkan Kota:", list_kota)
-
-# ==========================================
-# 2. KUERI SQL UTAMA & GRAFIK
-# ==========================================
-# Kueri utama untuk tabel dan metrik pendapatan/cup
-if selected_kota == "Semua Kota":
-  query_main = "SELECT * FROM tabel_penjualan"
-  query_chart = """
-        SELECT Nama_Produk, SUM(Total_Harga) AS Total_Pendapatan 
-        FROM tabel_penjualan 
-        GROUP BY Nama_Produk 
-        ORDER BY Total_Pendapatan DESC
-    """
-else:
-  query_main = f"SELECT * FROM tabel_penjualan WHERE Kota = '{selected_kota}'"
-  query_chart = f"""
-        SELECT Nama_Produk, SUM(Total_Harga) AS Total_Pendapatan 
-        FROM tabel_penjualan 
-        WHERE Kota = '{selected_kota}' 
-        GROUP BY Nama_Produk 
-        ORDER BY Total_Pendapatan DESC
-    """
-
-# Eksekusi kueri utama & chart
-df_filtered = pd.read_sql_query(query_main, conn)
-df_chart = pd.read_sql_query(query_chart, conn)
-
-# ==========================================
-# 3. KUERI SQL TAMBAHAN (PRODUK, BULAN, & AOV)
-# ==========================================
-# A. Produk Terlaris
-if selected_kota == "Semua Kota":
-  query_top_product = """
-        SELECT Nama_Produk, SUM(Jumlah_Cup) AS Total_Terjual 
-        FROM tabel_penjualan 
-        GROUP BY Nama_Produk 
-        ORDER BY Total_Terjual DESC 
-        LIMIT 1
-    """
-else:
-  query_top_product = f"""
-        SELECT Nama_Produk, SUM(Jumlah_Cup) AS Total_Terjual 
-        FROM tabel_penjualan 
-        WHERE Kota = '{selected_kota}'
-        GROUP BY Nama_Produk 
-        ORDER BY Total_Terjual DESC 
-        LIMIT 1
-    """
-df_top_product = pd.read_sql_query(query_top_product, conn)
-
-# B. Bulan Paling Produktif
-if selected_kota == "Semua Kota":
-  query_top_month = """
-        SELECT Bulan, SUM(Total_Harga) AS Pendapatan_Bulan 
-        FROM tabel_penjualan 
-        GROUP BY Bulan 
-        ORDER BY Pendapatan_Bulan DESC 
-        LIMIT 1
-    """
-else:
-  query_top_month = f"""
-        SELECT Bulan, SUM(Total_Harga) AS Pendapatan_Bulan 
-        FROM tabel_penjualan 
-        WHERE Kota = '{selected_kota}'
-        GROUP BY Bulan 
-        ORDER BY Pendapatan_Bulan DESC 
-        LIMIT 1
-    """
-df_top_month = pd.read_sql_query(query_top_month, conn)
-
-# ==========================================
-# 4. RINGKASAN METRIK (4 KOLOM)
-# ==========================================
-total_pendapatan = df_filtered["Total_Harga"].sum()
-total_cup = df_filtered["Jumlah_Cup"].sum()
-
-# Hitung Rata-rata Nilai Transaksi (AOV)
-if not df_filtered.empty:
-  rata_rata_transaksi = df_filtered["Total_Harga"].mean()
-else:
-  rata_rata_transaksi = 0
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-  st.metric(
-      label=f"Total Pendapatan ({selected_kota})",
-      value=f"Rp {total_pendapatan:,.0f}",
-  )
-
-with col2:
-  st.metric(
-      label=f"Total Cup Terjual ({selected_kota})", value=f"{total_cup} Cup"
-  )
-
-with col3:
-  if not df_top_product.empty:
-    top_name = df_top_product.iloc[0]["Nama_Produk"]
-    top_qty = df_top_product.iloc[0]["Total_Terjual"]
-    st.metric(
-        label=f"🏆 Terlaris", value=top_name, delta=f"{top_qty} Cup Terjual"
+    # Filter Kota di Sidebar
+    list_kota_query = "SELECT DISTINCT Kota FROM penjualan WHERE Kota IS NOT NULL ORDER BY Kota"
+    list_kota = [row[0] for row in conn.execute(list_kota_query).fetchall()]
+    selected_kota = st.sidebar.multiselect(
+        "Pilih Kota:", options=list_kota, default=list_kota
     )
 
-with col4:
-  if not df_top_month.empty:
-    top_bulan = df_top_month.iloc[0]["Bulan"]
-    top_bulan_omzet = df_top_month.iloc[0]["Pendapatan_Bulan"]
-    st.metric(
-        label=f"📈 Bulan Terbaik",
-        value=top_bulan,
-        delta=f"Rp {top_bulan_omzet:,.0f}",
+    # Penyusunan klausa WHERE untuk SQL
+    if not selected_kota:
+        where_clause = "WHERE 1=0"  # Jika tidak ada kota dipilih, tampilkan kosong
+    else:
+        formatted_cities = "', '".join(selected_kota)
+        where_clause = f"WHERE Kota IN ('{formatted_cities}')"
+
+    # ---------------------------------------------------------
+    # 3. KARTU METRIK UTAMA (SQL Queries)
+    # ---------------------------------------------------------
+    m1_query = f"SELECT SUM(Total_Harga), SUM(Jumlah_Cup) FROM penjualan {where_clause}"
+    res_m1 = conn.execute(m1_query).fetchone()
+    total_revenue = res_m1[0] if res_m1[0] else 0
+    total_cup = res_m1[1] if res_m1[1] else 0
+
+    m2_query = f"""
+        SELECT Nama_Produk, SUM(Jumlah_Cup) as total
+        FROM penjualan {where_clause}
+        GROUP BY Nama_Produk ORDER BY total DESC LIMIT 1
+    """
+    res_m2 = conn.execute(m2_query).fetchone()
+    best_product = res_m2[0] if res_m2 else "-"
+
+    m3_query = f"""
+        SELECT Bulan, SUM(Total_Harga) as total
+        FROM penjualan {where_clause}
+        GROUP BY Bulan ORDER BY total DESC LIMIT 1
+    """
+    res_m3 = conn.execute(m3_query).fetchone()
+    best_month = res_m3[0] if res_m3 else "-"
+
+    # AOV (Average Order Value)
+    aov_query = f"SELECT AVG(Total_Harga) FROM penjualan {where_clause}"
+    res_aov = conn.execute(aov_query).fetchone()
+    aov = res_aov[0] if res_aov[0] else 0
+
+    # Layout 5 Kartu Metrik
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Pendapatan Total", f"Rp {total_revenue:,.0f}".replace(",", "."))
+    col2.metric("Total Cup Terjual", f"{total_cup:,}".replace(",", "."))
+    col3.metric("Produk Terlaris 🏆", best_product)
+    col4.metric("Bulan Terbaik 📈", best_month)
+    col5.metric("Rata-rata Order (AOV)", f"Rp {aov:,.0f}".replace(",", "."))
+
+    st.markdown("---")
+
+    # ---------------------------------------------------------
+    # 4. VISUALISASI INTERAKTIF (PLOTLY CHART)
+    # ---------------------------------------------------------
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.subheader("📊 Pendapatan per Produk")
+        prod_query = f"""
+            SELECT Nama_Produk, SUM(Total_Harga) as Total_Pendapatan
+            FROM penjualan {where_clause}
+            GROUP BY Nama_Produk ORDER BY Total_Pendapatan DESC
+        """
+        df_prod = pd.read_sql_query(prod_query, conn)
+        fig_prod = px.bar(
+            df_prod,
+            x="Nama_Produk",
+            y="Total_Pendapatan",
+            text_auto=".2s",
+            color="Nama_Produk",
+            labels={"Total_Pendapatan": "Pendapatan (Rp)", "Nama_Produk": "Produk"},
+        )
+        fig_prod.update_layout(showlegend=False)
+        st.plotly_chart(fig_prod, use_container_width=True)
+
+    with chart_col2:
+        st.subheader("💳 Proporsi Metode Pembayaran")
+        # Menyesuaikan fitur baru dari file excel generator
+        pay_query = f"""
+            SELECT Metode_Bayar, COUNT(*) as Total_Transaksi
+            FROM penjualan {where_clause}
+            GROUP BY Metode_Bayar
+        """
+        df_pay = pd.read_sql_query(pay_query, conn)
+        if not df_pay.empty and "Metode_Bayar" in df_pay.columns:
+            fig_pay = px.pie(
+                df_pay,
+                names="Metode_Bayar",
+                values="Total_Transaksi",
+                hole=0.4,
+            )
+            st.plotly_chart(fig_pay, use_container_width=True)
+        else:
+            st.info("Kolom 'Metode_Bayar' tidak ditemukan di file ini.")
+
+    # ---------------------------------------------------------
+    # 5. TABEL DETAIL & EKSPOR EXCEL
+    # ---------------------------------------------------------
+    st.subheader("📋 Detail Data Transaksi")
+    table_query = f"SELECT * FROM penjualan {where_clause} LIMIT 100"
+    df_table = pd.read_sql_query(table_query, conn)
+    st.dataframe(df_table, use_container_width=True)
+
+    # Ekspor ke Excel
+    export_query = f"SELECT * FROM penjualan {where_clause}"
+    df_export = pd.read_sql_query(export_query, conn)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Filtered_Data")
+
+    st.download_button(
+        label="📥 Unduh Data Hasil Filter (.xlsx)",
+        data=buffer.getvalue(),
+        file_name="Laporan_Penjualan_Filtered.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-# Tambahan Info AOV di bawahnya atau ringkasan kecil
-st.caption(
-    f"💳 Rata-rata Nilai Transaksi (AOV) untuk {selected_kota}: **Rp"
-    f" {rata_rata_transaksi:,.0f}** per transaksi"
-)
-
-st.markdown("---")
-
-# ==========================================
-# 5. TABEL DATA TRANSAKSI & FITUR EXCEL EXPORT
-# ==========================================
-st.subheader(f"📋 Data Transaksi ({selected_kota})")
-st.dataframe(df_filtered, use_container_width=True)
-
-# Tombol Export Data ke Excel menggunakan io.BytesIO
-output = io.BytesIO()
-with pd.ExcelWriter(output, engine="openpyxl") as writer:
-  df_filtered.to_excel(writer, index=False, sheet_name="Laporan Penjualan")
-excel_data = output.getvalue()
-
-st.download_button(
-    label=f"📥 Export Data {selected_kota} ke Excel",
-    data=excel_data,
-    file_name=f"laporan_penjualan_{selected_kota.lower().replace(' ', '_')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
-
-st.markdown("---")
-
-# ==========================================
-# 6. VISUALISASI GRAFIK BATANG
-# ==========================================
-st.subheader(f"📊 Grafik Penjualan per Produk ({selected_kota})")
-
-if not df_chart.empty:
-  # Mengatur 'Nama_Produk' sebagai index agar bar chart Streamlit membaca label dengan benar
-  df_chart_indexed = df_chart.set_index("Nama_Produk")
-  st.bar_chart(df_chart_indexed["Total_Pendapatan"])
 else:
-  st.warning("Tidak ada data grafik untuk kota yang dipilih.")
-
-# Tutup koneksi database di akhir skrip
-conn.close()
+    st.info("👋 Silakan unggah file Excel `data_penjualan_kopi.xlsx` pada sidebar untuk melihat dashboard.")
