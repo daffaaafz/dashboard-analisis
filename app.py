@@ -1,4 +1,5 @@
 import io
+import calendar
 import sqlite3
 import pandas as pd
 import plotly.express as px
@@ -14,17 +15,28 @@ st.set_page_config(
 st.title("☕ Dashboard Analisis Penjualan Kopi")
 st.markdown("---")
 
-# 2. Sidebar: Upload File & Filter
+# Fungsi Format Angka Lokal Indonesia
+def fmt(x, d=1):
+    return f"{x:,.{d}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# 2. Sidebar: Upload File Banyak Klien & Filter
 st.sidebar.header("📁 Unggah Data & Filter")
 
-uploaded_file = st.sidebar.file_uploader(
-    "Unggah File Excel Penjualan (.xlsx)", type=["xlsx"]
+uploaded_files = st.sidebar.file_uploader(
+    "Unggah File Excel Penjualan (.xlsx)", 
+    type=["xlsx"], 
+    accept_multiple_files=True
 )
 
-if uploaded_file is not None:
-    # Read Excel
-    df = pd.read_excel(uploaded_file)
-    df.columns = df.columns.str.strip()  # Hapus spasi tak terlihat pada kolom
+if uploaded_files:
+    # Read & combine Excel files
+    df_list = []
+    for file in uploaded_files:
+        temp_df = pd.read_excel(file)
+        temp_df.columns = temp_df.columns.str.strip()
+        df_list.append(temp_df)
+    
+    df = pd.concat(df_list, ignore_index=True)
 
     # Simpan Data ke SQLite In-Memory Database
     conn = sqlite3.connect(":memory:")
@@ -145,91 +157,192 @@ if uploaded_file is not None:
         )
 
     with tab2:
-        st.header("📈 Analisis Mendalam & Rekomendasi Strategis")
-        st.markdown("Tab ini merangkum 5 pilar evaluasi kinerja bisnis berdasarkan data transaksi.")
-        st.markdown("---")
-
-        # Ambil data terfilter untuk tab 2
+        st.header("📈 Insight Bisnis & Rekomendasi Strategis")
+        
+        # Ambil data terfilter
         df_filtered = pd.read_sql_query(f"SELECT * FROM penjualan {where_clause}", conn)
 
         if df_filtered.empty:
             st.warning("Tidak ada data untuk kota yang dipilih.")
         else:
-            # 1. Tren Omzet Bulanan
-            st.subheader("1. Tren Omzet Bulanan")
+            # Preprocessing Waktu
             df_filtered['Tanggal_DT'] = pd.to_datetime(df_filtered['Tanggal'])
+            df_filtered['Tahun'] = df_filtered['Tanggal_DT'].dt.year
+            df_filtered['Bulan_Num'] = df_filtered['Tanggal_DT'].dt.month
             df_filtered['Bulan_Tahun'] = df_filtered['Tanggal_DT'].dt.to_period('M').astype(str)
-            df_monthly = df_filtered.groupby('Bulan_Tahun')['Total_Harga'].sum().reset_index()
-            
-            fig_trend = px.line(df_monthly, x='Bulan_Tahun', y='Total_Harga', markers=True,
-                                labels={'Bulan_Tahun': 'Bulan', 'Total_Harga': 'Total Omzet (Rp)'})
-            st.plotly_chart(fig_trend, use_container_width=True)
-            
-            st.markdown("**🔍 Temuan:** Omzet bulanan menunjukkan fluktuasi stabil dengan titik puncak dan koreksi di beberapa periode tertentu.")
-            st.markdown("**💡 Rekomendasi:** Tingkatkan promosi atau adakan event khusus pada bulan-bulan yang mengalami penurunan untuk menjaga kestabilan cash flow.")
+            df_filtered['Jumlah_Hari'] = df_filtered.apply(lambda r: calendar.monthrange(int(r['Tahun']), int(r['Bulan_Num']))[1], axis=1)
+
+            # --- METRIK PERSIAPAN DYNAMIC REKOMENDASI UTAMA ---
+            df_p = df_filtered.groupby('Nama_Produk')['Total_Harga'].sum().reset_index().sort_values(by='Total_Harga', ascending=False)
+            df_p['Cum_Pct'] = (df_p['Total_Harga'].cumsum() / df_p['Total_Harga'].sum()) * 100
+            top_80_prods = df_p[df_p['Cum_Pct'] <= 85]['Nama_Produk'].tolist()
+            if not top_80_prods:
+                top_80_prods = df_p.head(1)['Nama_Produk'].tolist()
+            top_prods_str = ", ".join(top_80_prods)
+
+            df_c = df_filtered.groupby('Kota')['Total_Harga'].sum().reset_index().sort_values(by='Total_Harga', ascending=False)
+            top_city = df_c.iloc[0]['Kota'] if len(df_c) > 0 else "-"
+            low_city = df_c.iloc[-1]['Kota'] if len(df_c) > 1 else top_city
+
+            df_h = df_filtered.groupby(['Hari', 'Jam'])['ID_Transaksi'].count().reset_index(name='Jml').sort_values(by='Jml', ascending=False)
+            peak_day = df_h.iloc[0]['Hari'] if not df_h.empty else "-"
+            peak_jam = df_h.iloc[0]['Jam'] if not df_h.empty else "-"
+
+            # --- RINGKASAN EXECUTIVE (3 POIN REKOMENDASI UTAMA) ---
+            st.info(f"""
+            📌 **Ringkasan Eksekutif & Fokus Strategis:**
+            1. **Fokus Inventaris Utama:** Jaga kontinuitas stok bahan baku untuk produk penyumbang omzet terbesar (**{top_prods_str}**).
+            2. **Alokasi Pemasaran Wilayah:** Optimalkan ekspansi pasar di **{top_city}** dan evaluasi ulang penetrasi strategi di **{low_city}**.
+            3. **Efisiensi Operasional:** Tingkatkan jumlah *barista/staf* pada jam sibuk (Hari **{peak_day}**, Pukul **{peak_jam}**) untuk mencegah antrean panjang.
+            """)
             st.markdown("---")
 
-            # 2. Kontribusi Produk (Pareto)
-            st.subheader("2. Kontribusi Produk terhadap Omzet")
-            df_prod_contrib = df_filtered.groupby('Nama_Produk')['Total_Harga'].sum().reset_index()
-            df_prod_contrib = df_prod_contrib.sort_values(by='Total_Harga', ascending=False)
+            # 1. Tren Omzet Bulanan (Dinormalisasi per Hari)
+            st.subheader("1. Tren Omzet Rata-rata per Hari (Bulanan)")
+            df_monthly = df_filtered.groupby(['Bulan_Tahun', 'Jumlah_Hari'])['Total_Harga'].sum().reset_index()
+            df_monthly['Omzet_Per_Hari'] = df_monthly['Total_Harga'] / df_monthly['Jumlah_Hari']
+
+            max_m = df_monthly.sort_values(by='Omzet_Per_Hari', ascending=False).iloc[0]
+            min_m = df_monthly.sort_values(by='Omzet_Per_Hari', ascending=True).iloc[0]
+
+            fig_trend = px.line(
+                df_monthly, 
+                x='Bulan_Tahun', 
+                y='Omzet_Per_Hari', 
+                markers=True,
+                labels={'Bulan_Tahun': 'Bulan', 'Omzet_Per_Hari': 'Rata-rata Omzet / Hari (Rp)'}
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            st.markdown(f"**🔍 Temuan:** Performa harian tertinggi diraih pada **{max_m['Bulan_Tahun']}** dengan rata-rata **Rp {max_m['Omzet_Per_Hari']:,.0f}/hari**, sedangkan terendah pada **{min_m['Bulan_Tahun']}** di tingkat **Rp {min_m['Omzet_Per_Hari']:,.0f}/hari**.".replace(",", "."))
+            st.markdown(f"**💡 Rekomendasi:** Alokasikan anggaran promosi dan program *loyalty* tambahan pada periode mendekati **{min_m['Bulan_Tahun']}** guna mendongkrak omzet harian saat periode sepi.")
+            st.markdown("---")
+
+            # 2. Kontribusi Produk (Pareto 80/20)
+            st.subheader("2. Kontribusi Produk terhadap Omzet (Analisis Pareto)")
+            df_prod_contrib = df_p.copy()
             df_prod_contrib['Persentase'] = (df_prod_contrib['Total_Harga'] / df_prod_contrib['Total_Harga'].sum()) * 100
 
-            fig_prod_contrib = px.bar(df_prod_contrib, x='Nama_Produk', y='Total_Harga', 
-                                      text=df_prod_contrib['Persentase'].round(1).astype(str) + '%',
-                                      labels={'Nama_Produk': 'Produk', 'Total_Harga': 'Omzet (Rp)'})
+            fig_prod_contrib = px.bar(
+                df_prod_contrib, 
+                x='Nama_Produk', 
+                y='Total_Harga', 
+                text=df_prod_contrib['Persentase'].round(1).astype(str) + '%',
+                labels={'Nama_Produk': 'Produk', 'Total_Harga': 'Total Omzet (Rp)'}
+            )
             st.plotly_chart(fig_prod_contrib, use_container_width=True)
 
-            st.markdown("**🔍 Temuan:** Sebagian besar omzet didominasi oleh segelintir produk unggulan (seperti Kopi Susu Gula Aren dan Kopi Latte) yang menyumbang mayoritas pendapatan.")
-            st.markdown("**💡 Rekomendasi:** Pastikan inventaris bahan baku untuk produk-produk kontributor utama ini selalu aman agar terhindar dari kehabisan stok.")
+            tot_80_pct = df_prod_contrib[df_prod_contrib['Nama_Produk'].isin(top_80_prods)]['Persentase'].sum()
+            st.markdown(f"**🔍 Temuan:** Produk **{top_prods_str}** secara kumulatif menyumbang **{tot_80_pct:.1f}%** dari total pendapatan.")
+            st.markdown(f"**💡 Rekomendasi:** Fokuskan strategi ketersediaan stok (*never out-of-stock*) pada **{top_prods_str}** dan pertimbangkan skema *bundling* produk kurang laris dengan produk unggulan ini.")
             st.markdown("---")
 
             # 3. Performa Kota
             st.subheader("3. Performa Pertumbuhan Kota")
             df_city_trend = df_filtered.groupby(['Bulan_Tahun', 'Kota'])['Total_Harga'].sum().reset_index()
-            fig_city = px.line(df_city_trend, x='Bulan_Tahun', y='Total_Harga', color='Kota', markers=True,
-                               labels={'Bulan_Tahun': 'Bulan', 'Total_Harga': 'Omzet (Rp)', 'Kota': 'Kota'})
+            fig_city = px.line(
+                df_city_trend, 
+                x='Bulan_Tahun', 
+                y='Total_Harga', 
+                color='Kota', 
+                markers=True,
+                labels={'Bulan_Tahun': 'Bulan', 'Total_Harga': 'Total Omzet (Rp)', 'Kota': 'Kota'}
+            )
             st.plotly_chart(fig_city, use_container_width=True)
 
-            st.markdown("**🔍 Temuan:** Terdapat ketimpangan performa di mana kota tertentu mengalami pertumbuhan positif yang konsisten, sementara kota lain cenderung mendatar atau melemah.")
-            st.markdown("**💡 Rekomendasi:** Alokasikan strategi pemasaran lokal yang lebih agresif ke kota yang menunjukkan tren melemah guna mendongkrak kembali angka penjualan.")
+            if len(selected_kota) == 1:
+                st.markdown(f"**🔍 Temuan:** Kota **{top_city}** menghasilkan total omzet sebesar **Rp {df_c.iloc[0]['Total_Harga']:,.0f}** selama periode analisis.".replace(",", "."))
+                st.markdown(f"**💡 Rekomendasi:** Pertahankan performa pasar di **{top_city}** dengan memperkuat efisiensi operasional outlet.")
+            else:
+                st.markdown(f"**🔍 Temuan:** Kota **{top_city}** memimpin kontribusi omzet terbesar (Rp {df_c.iloc[0]['Total_Harga']:,.0f}), sementara **{low_city}** mencatatkan kinerja terendah (Rp {df_c.iloc[-1]['Total_Harga']:,.0f}).".replace(",", "."))
+                st.markdown(f"**💡 Rekomendasi:** Evaluasi efektivitas kampanye lokal di **{low_city}** atau alokasikan ulang sebagian anggaran pemasaran ke kota **{top_city}** yang terbukti bertumbuh lebih cepat.")
             st.markdown("---")
 
             # 4. Jam dan Hari Tersibuk (Heatmap)
-            st.subheader("4. Analisis Jam dan Hari Tersibuk")
+            st.subheader("4. Analisis Waktu Operasional Tersibuk")
             day_order = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
             df_heat = df_filtered.groupby(['Hari', 'Jam'])['ID_Transaksi'].count().reset_index(name='Jumlah_Transaksi')
             
-            fig_heat = px.density_heatmap(df_heat, x='Jam', y='Hari', z='Jumlah_Transaksi', 
-                                          category_orders={"Hari": day_order},
-                                          color_continuous_scale="Viridis",
-                                          labels={'Jam': 'Jam Operasional', 'Hari': 'Hari', 'Jumlah_Transaksi': 'Jml Transaksi'})
+            fig_heat = px.density_heatmap(
+                df_heat, 
+                x='Jam', 
+                y='Hari', 
+                z='Jumlah_Transaksi', 
+                category_orders={"Hari": day_order},
+                color_continuous_scale="Viridis",
+                labels={'Jam': 'Jam Operasional', 'Hari': 'Hari', 'Jumlah_Transaksi': 'Jml Transaksi'}
+            )
             st.plotly_chart(fig_heat, use_container_width=True)
 
-            st.markdown("**🔍 Temuan:** Kepadatan transaksi sangat terkonsentrasi pada jam-jam tertentu (pagi dan sore hari) serta akhir pekan.")
-            st.markdown("**💡 Rekomendasi:** Atur jadwal shift staf agar lebih padat di jam sibuk tersebut dan tawarkan promo 'Happy Hour' untuk menarik pelanggan di jam-jam sepi.")
+            peak_count = df_h.iloc[0]['Jml'] if not df_h.empty else 0
+            
+            # Tambahan Jam Tersibuk secara Keseluruhan
+            puncak = df_filtered["Jam"].value_counts()
+            if not puncak.empty:
+                st.markdown(f"🔍 Jam tersibuk secara keseluruhan: **{puncak.idxmax()}** ({fmt(puncak.max() / len(df_filtered) * 100)}% transaksi)")
+
+            st.markdown(f"**🔍 Temuan Waktu Puncak:** Transaksi tertinggi spesifik terjadi pada hari **{peak_day}** pukul **{peak_jam}** dengan total **{peak_count} transaksi**.")
+            st.markdown(f"**💡 Rekomendasi:** Jadwalkan kuota staf maksimum di hari **{peak_day}** sekitar pukul **{peak_jam}**, serta luncurkan promo *Happy Hour* pada jam-jam sepi untuk meratakan arus pengunjung.")
             st.markdown("---")
 
-            # 5. Efek Diskon dan Metode Bayar
+            # 5. Efek Diskon dan Metode Pembayaran (Menggunakan Uji Statistik & Format Kustom)
             st.subheader("5. Analisis Efek Diskon dan Metode Pembayaran")
             col_a, col_b = st.columns(2)
 
+            df = df_filtered.copy() # Alias untuk mencocokkan snippet
+
             with col_a:
-                st.markdown("**Rata-rata Nilai Transaksi: Dengan vs Tanpa Diskon**")
-                df_filtered['Status_Diskon'] = df_filtered['Diskon_Persen'].apply(lambda x: 'Dengan Diskon' if x > 0 else 'Tanpa Diskon')
-                df_disc = df_filtered.groupby('Status_Diskon')['Total_Harga'].mean().reset_index()
-                fig_disc = px.bar(df_disc, x='Status_Diskon', y='Total_Harga', text_auto='.2f',
-                                  labels={'Status_Diskon': 'Kategori', 'Total_Harga': 'Rata-rata Transaksi (Rp)'})
+                st.markdown("**Analisis Efek Diskon**")
+                
+                # Uji signifikansi statistik diskon
+                a = df.loc[df["Diskon_Persen"] > 0, "Jumlah_Cup"]
+                b = df.loc[df["Diskon_Persen"] == 0, "Jumlah_Cup"]
+                if len(a) > 1 and len(b) > 1:
+                    se = (a.var() / len(a) + b.var() / len(b)) ** 0.5
+                    bermakna = abs(a.mean() - b.mean()) > 1.96 * se if se > 0 else False
+                    kesimpulan = ("selisih ini bermakna secara statistik" if bermakna else "selisih ini tidak bermakna secara statistik, jadi diskon belum terbukti menambah isi keranjang")
+                else:
+                    kesimpulan = "data sampel kurang untuk uji statistik"
+
+                g = df.assign(diskon=df["Diskon_Persen"] > 0).groupby("diskon").agg(
+                    n=("Total_Harga", "size"), cup=("Jumlah_Cup", "mean"), aov=("Total_Harga", "mean"))
+                if len(g) == 2:
+                    d_cup = (g.loc[True, "cup"] / g.loc[False, "cup"] - 1) * 100
+                    d_aov = (g.loc[True, "aov"] / g.loc[False, "aov"] - 1) * 100
+                    catatan = " Sampel kecil, hati-hati menyimpulkan." if g.loc[True, "n"] < 30 else ""
+                    st.markdown(
+                        f"🔍 **Temuan:** Transaksi berdiskon berisi {g.loc[True, 'cup']:.2f} cup vs "
+                        f"{g.loc[False, 'cup']:.2f} tanpa diskon ({d_cup:+.1f}%), tetapi nilainya "
+                        f"{abs(d_aov):.1f}% lebih rendah ({g.loc[True, 'n']} transaksi berdiskon). {kesimpulan}.{catatan}")
+                
+                # Grafik bar diskon pendukung
+                df_disc = df.assign(Status_Diskon=df["Diskon_Persen"].apply(lambda x: 'Dengan Diskon' if x > 0 else 'Tanpa Diskon'))
+                df_disc_agg = df_disc.groupby('Status_Diskon')['Total_Harga'].mean().reset_index()
+                fig_disc = px.bar(
+                    df_disc_agg, 
+                    x='Status_Diskon', 
+                    y='Total_Harga', 
+                    text_auto='.0f',
+                    labels={'Status_Diskon': 'Kategori', 'Total_Harga': 'Rata-rata Nilai Transaksi (Rp)'}
+                )
                 st.plotly_chart(fig_disc, use_container_width=True)
 
             with col_b:
                 st.markdown("**Dominasi Metode Pembayaran**")
-                df_pay_meth = df_filtered.groupby('Metode_Bayar')['Total_Harga'].sum().reset_index()
-                fig_pay_meth = px.pie(df_pay_meth, names='Metode_Bayar', values='Total_Harga', hole=0.3)
-                st.plotly_chart(fig_pay_meth, use_container_width=True)
+                
+                # Metode bayar: konsisten pakai jumlah transaksi
+                share = df["Metode_Bayar"].value_counts(normalize=True) * 100
+                digital = share.reindex(["QRIS", "E-Wallet"]).sum()
+                st.markdown(f"🔍 **{share.idxmax()}** adalah metode terbesar ({fmt(share.max())}% transaksi); "
+                            f"QRIS + E-Wallet mencapai {fmt(digital)}%.")
 
-            st.markdown("**🔍 Temuan:** Transaksi didominasi oleh metode pembayaran digital (terutama QRIS) dan pemberian diskon terbukti menarik volume transaksi yang lebih besar.")
-            st.markdown("**💡 Rekomendasi:** Jaga kestabilan infrastruktur pembayaran digital dan evaluasi margin keuntungan secara berkala agar program diskon tetap memberikan profit yang sehat.")
+                # Pie: hitung jumlah transaksi (tanpa values=...) dan kunci warna
+                fig = px.pie(df, names="Metode_Bayar", hole=0.4, color="Metode_Bayar",
+                             color_discrete_map={"QRIS": "#636EFA", "E-Wallet": "#00CC96",
+                                                "Tunai": "#EF553B", "Debit": "#AB63FA"})
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("**💡 Rekomendasi:** Evaluasi kembali besar penetapan diskon agar tidak menurunkan ukuran nilai keranjang secara drastis, serta jaga stabilitas operasional sistem pembayaran digital utama (QRIS & E-Wallet).")
 
 else:
-    st.info("👋 Silakan unggah file Excel `data_penjualan_kopi.xlsx` pada sidebar untuk melihat dashboard.")
+    st.info("👋 Silakan unggah file pada sidebar untuk melihat dashboard.")
