@@ -40,4 +40,5 @@ Proyek ini dikembangkan sebagai bagian dari portofolio *Data Science / Data Anal
 
 1. **Clone repository ini:**
    ```bash
-   git clone [https://github.com/daffaaafz/coffee-sales-dashboard.git]
+   git clone [https://github.com/daffaaafz/dashboard-analisis
+.git]
